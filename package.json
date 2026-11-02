@@ -1,8 +1,8 @@
 {
-  "name": "tram-qr-nth",
+  "name": "tram-chuyen-mat",
   "version": "3.0.0",
   "type": "module",
-  "description": "Nghịch Thủy Hàn · Dung Hoa Các — Chuyển Đổi QR Bản Trung sang Bản Global (React + Vite + Tailwind CSS v4)",
+  "description": "Trạm Chuyển Mặt — Công cụ chuyển đổi diện mạo, mã QR nặn mặt Nghịch Thủy Hàn từ bản Trung sang bản Global / VN",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 8080",
     "build": "vite build",

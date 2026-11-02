@@ -1,6 +1,6 @@
-# Trạm QR Nghịch Thủy Hàn (`tram-qr-nth`)
+# Trạm Chuyển Mặt (`tram-chuyen-mat`)
 
-> **Công cụ chuyển đổi mã QR / Preset tạo hình Nghịch Thủy Hàn từ bản Trung Quốc sang bản Global / VN.**
+> **Công cụ chuyển đổi diện mạo, mã QR nặn mặt Nghịch Thủy Hàn từ bản Trung sang bản Global / VN.**
 
 Hỗ trợ chuyển đổi nhanh chóng dữ liệu diện mạo khuôn mặt, trang điểm, nhuộm thời trang (tóc, áo, quần) và góc chụp ảnh giữa các phiên bản game Nghịch Thủy Hàn (Justice Online).
 
