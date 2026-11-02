@@ -1,8 +1,8 @@
 {
-  "name": "tram-chuyen-mat",
+  "name": "nth-preset-converter",
   "version": "3.0.0",
   "type": "module",
-  "description": "Trạm Chuyển Mặt — Công cụ chuyển đổi diện mạo, mã QR nặn mặt Nghịch Thủy Hàn từ bản Trung sang bản Global / VN",
+  "description": "Nghịch Thủy Hàn · Dung Hoa Các — Công cụ chuyển đổi Preset (Mặt, Ngoại trang, Trang điểm) từ bản Trung sang bản Global / VN",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 8080",
     "build": "vite build",
