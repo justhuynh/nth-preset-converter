@@ -1,0 +1,32 @@
+{
+  "name": "Nghịch Thủy Hàn · Dung Hoa Các — Chuyển Đổi QR Giang Hồ",
+  "short_name": "Dung Hoa Các",
+  "description": "Công cụ chuyển đổi mã QR khuôn mặt, trang điểm, nhuộm đồ (tóc, áo, quần) và chụp ảnh Nghịch Thủy Hàn từ Bản Trung sang Bản Global.",
+  "lang": "vi",
+  "dir": "ltr",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#081520",
+  "theme_color": "#081520",
+  "categories": ["utilities", "games", "entertainment"],
+  "icons": [
+    {
+      "src": "/assets/logo-crest.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/favicon.png",
+      "sizes": "64x64",
+      "type": "image/png"
+    },
+    {
+      "src": "/assets/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

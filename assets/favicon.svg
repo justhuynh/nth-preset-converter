@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
+  <defs>
+    <radialGradient id="nightJade" cx="50%" cy="38%" r="65%">
+      <stop offset="0%" stop-color="#1d5f72"/>
+      <stop offset="55%" stop-color="#0f3446"/>
+      <stop offset="100%" stop-color="#071924"/>
+    </radialGradient>
+    <linearGradient id="lanternGold" x1="12" y1="8" x2="116" y2="120" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#fff0c4"/>
+      <stop offset="45%" stop-color="#e3b869"/>
+      <stop offset="100%" stop-color="#9e712b"/>
+    </linearGradient>
+    <linearGradient id="bladeCyan" x1="64" y1="14" x2="64" y2="112" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#e6ffff"/>
+      <stop offset="50%" stop-color="#7ce8df"/>
+      <stop offset="100%" stop-color="#2ca5b8"/>
+    </linearGradient>
+  </defs>
+  <!-- Octagonal Wuxia Medallion -->
+  <circle cx="64" cy="64" r="58" fill="url(#nightJade)" stroke="url(#lanternGold)" stroke-width="4.5"/>
+  <circle cx="64" cy="64" r="50" stroke="url(#lanternGold)" stroke-opacity="0.4" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <!-- Crescent Moon & Lotus Waves -->
+  <path d="M36 88C46 80 56 84 64 84C72 84 82 80 92 88" stroke="url(#lanternGold)" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M44 96C52 91 76 91 84 96" stroke="#7ce8df" stroke-opacity="0.7" stroke-width="2" stroke-linecap="round"/>
+  <!-- Sacred Wuxia Sword & Jade Guard -->
+  <path d="M64 16L71 34L68 82L64 90L60 82L57 34L64 16Z" fill="url(#bladeCyan)"/>
+  <path d="M64 18V86" stroke="#ffffff" stroke-width="1.5" stroke-opacity="0.8"/>
+  <!-- Winged Gold Crossguard -->
+  <path d="M38 42C47 47 56 49 64 49C72 49 81 47 90 42L84 51C76 54 70 55 64 55C58 55 52 54 44 51L38 42Z" fill="url(#lanternGold)"/>
+  <!-- Glowing Lotus Gem -->
+  <polygon points="64,43 70,49 64,55 58,49" fill="#ff7eb3" stroke="#fff0c4" stroke-width="1.5"/>
+  <!-- Floating Spirit Pearls -->
+  <circle cx="34" cy="64" r="3.5" fill="#7ce8df"/>
+  <circle cx="94" cy="64" r="3.5" fill="#7ce8df"/>
+</svg>

@@ -1,0 +1,24 @@
+{
+  "name": "nth-cn2vn",
+  "version": "3.0.0",
+  "type": "module",
+  "description": "Nghịch Thủy Hàn · Dung Hoa Các — Chuyển Đổi QR Bản Trung sang Bản Global (React + Vite + Tailwind CSS v4)",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 8080",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 8080",
+    "start": "vite --host 127.0.0.1 --port 8080"
+  },
+  "dependencies": {
+    "jsqr": "^1.4.0",
+    "qrcode": "^1.5.4",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "tailwindcss": "^4.1.0",
+    "vite": "^6.2.0"
+  }
+}

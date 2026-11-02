@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /f/
+
+Sitemap: https://nth-qrcode-converter.pages.dev/sitemap.xml
