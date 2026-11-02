@@ -1,4 +1,4 @@
-# Nghịch Thủy Hàn · Dung Hoa Các (NTH QR Converter)
+# Trạm QR Nghịch Thủy Hàn (`tram-qr-nth`)
 
 > **Công cụ chuyển đổi mã QR / Preset tạo hình Nghịch Thủy Hàn từ bản Trung Quốc sang bản Global / VN.**
 
