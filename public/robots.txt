@@ -3,4 +3,4 @@ Allow: /
 Disallow: /api/
 Disallow: /f/
 
-Sitemap: https://nth-qrcode-converter.pages.dev/sitemap.xml
+Sitemap: https://nth-preset-converter.vercel.app/sitemap.xml

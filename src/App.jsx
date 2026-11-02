@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   MAX_IMAGE_BYTES,
-  MODE_INFO,
+  getModeInfo,
   MODES,
   DYE_CATEGORIES,
   isDye,
@@ -23,6 +23,8 @@ import {
   apiErrorMessage,
   formatValue,
   extractValidColors,
+  getControlDisplayName,
+  generateClientQrDataURL,
 } from "./utils/converter.js";
 import {
   MODE_ICON_MAP,
@@ -37,17 +39,27 @@ import {
   CloseIcon,
   SparkleIcon,
   GuideIcon,
+  GlobeIcon,
 } from "./components/Icons.jsx";
 import { WuxiaParticles } from "./components/WuxiaParticles.jsx";
 import { GuidePanel } from "./components/GuidePanel.jsx";
 
-const MODE_LIST = [
-  { id: "face", title: "QR mặt", sub: "Diện mạo & ngũ quan" },
-  { id: "makeup", title: "Trang điểm", sub: "Son phấn & thần thái" },
-  { id: "dye", title: "Nhuộm màu", sub: "Tóc, áo & quần" },
-  { id: "photo", title: "Chụp ảnh", sub: "Đoàn phim & góc máy" },
-  { id: "guide", title: "Hướng dẫn", sub: "Cẩm nang chi tiết" },
-];
+const MODE_LIST_BY_LANG = {
+  vi: [
+    { id: "face", title: "QR mặt", sub: "Diện mạo & ngũ quan" },
+    { id: "makeup", title: "Trang điểm", sub: "Son phấn & thần thái" },
+    { id: "dye", title: "Nhuộm màu", sub: "Tóc, áo & quần" },
+    { id: "photo", title: "Chụp ảnh", sub: "Đoàn phim & góc máy" },
+    { id: "guide", title: "Hướng dẫn", sub: "Cẩm nang chi tiết" },
+  ],
+  en: [
+    { id: "face", title: "Face QR", sub: "Facial sculpting & features" },
+    { id: "makeup", title: "Makeup", sub: "Cosmetics & aura" },
+    { id: "dye", title: "Dyeing", sub: "Hair, top & bottom" },
+    { id: "photo", title: "Photo Mode", sub: "Studio & camera preset" },
+    { id: "guide", title: "Guide", sub: "Step-by-step handbook" },
+  ],
+};
 
 const INITIAL_DRAFTS = {
   face: "",
@@ -58,8 +70,28 @@ const INITIAL_DRAFTS = {
 
 const CN_GALLERY_URL = "https://h.163.com/avatar/#/TheRecommendedDesign";
 
-function parseInitialRoute() {
-  const raw = window.location.hash.replace(/^#/, "").trim().toLowerCase();
+function parseInitialLang() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const qLang = params.get("lang")?.trim().toLowerCase();
+    if (qLang === "en" || qLang === "vi") return qLang;
+    const saved = localStorage.getItem("nth_lang")?.trim().toLowerCase();
+    if (saved === "en" || saved === "vi") return saved;
+  } catch {
+    // ignore storage errors
+  }
+  return "vi";
+}
+
+function parseRouteMode() {
+  const pathSeg =
+    window.location.pathname
+      .replace(/^\/+|\/+$/g, "")
+      .split("/")[0]
+      ?.trim()
+      .toLowerCase() || "";
+  const hashSeg = window.location.hash.replace(/^#\/?/, "").trim().toLowerCase();
+  const raw = pathSeg || hashSeg;
   if (DYE_CATEGORIES.includes(raw) || raw === "dye") {
     return "dye";
   }
@@ -211,7 +243,8 @@ function StreamingWhiteContent({ streamId, compatText, modelNote, warnings }) {
 }
 
 export function App() {
-  const [mode, setMode] = useState(parseInitialRoute);
+  const [lang, setLang] = useState(parseInitialLang);
+  const [mode, setMode] = useState(parseRouteMode);
   const [inputTab, setInputTab] = useState("link"); // "link" | "image"
   const [drafts, setDrafts] = useState(INITIAL_DRAFTS);
   const [dyeMode, setDyeMode] = useState("default"); // "default" | "exact"
@@ -235,12 +268,17 @@ export function App() {
   const [feedback, setFeedback] = useState({ message: "", tone: "info" });
   const [resultsByMode, setResultsByMode] = useState({}); // { [mode]: { result, kind, streamId } }
   const [copiedId, setCopiedId] = useState("");
+  const [paletteQr, setPaletteQr] = useState(null); // { streamId, dataUrl }
   const resultData = resultsByMode[mode] || null;
 
   const abortControllerRef = useRef(null);
   const fileInputRef = useRef(null);
   const textareaRef = useRef(null);
   const resultSectionRef = useRef(null);
+
+  const isEn = lang === "en";
+  const modeInfoMap = getModeInfo(lang);
+  const modeList = MODE_LIST_BY_LANG[lang] || MODE_LIST_BY_LANG.vi;
 
   const pageOrigin = window.location.origin;
   const configuredOrigin = (() => {
@@ -251,10 +289,39 @@ export function App() {
     }
   })();
 
-  // Sync hash with mode
+  const handleSelectLang = (nextLang) => {
+    if (nextLang !== "vi" && nextLang !== "en") return;
+    setLang(nextLang);
+    try {
+      localStorage.setItem("nth_lang", nextLang);
+    } catch {
+      // ignore storage errors
+    }
+    setFeedback((prev) => (prev.message ? { message: "", tone: "info" } : prev));
+  };
+
+  // Sync HTML lang & document title
   useEffect(() => {
-    const onHashChange = () => {
-      const next = parseInitialRoute();
+    document.documentElement.lang = lang;
+    document.title = isEn
+      ? "Dung Hoa Cac — Sword of Justice Preset & QR Converter (CN → Global)"
+      : "Dung Hoa Các — Công Cụ Chuyển Mã QR Nghịch Thủy Hàn (Bản Trung → Bản Global)";
+  }, [lang, isEn]);
+
+  // Normalize initial URL path (e.g., "/" or "/#face" -> "/face") & listen to popstate/hashchange
+  useEffect(() => {
+    const initialMode = parseRouteMode();
+    const expectedPath = "/" + initialMode;
+    if (window.location.pathname !== expectedPath || window.location.hash) {
+      window.history.replaceState(null, "", expectedPath + window.location.search);
+    }
+
+    const syncRoute = () => {
+      const next = parseRouteMode();
+      const targetPath = "/" + next;
+      if (window.location.hash) {
+        window.history.replaceState(null, "", targetPath + window.location.search);
+      }
       setMode((prev) => {
         if (prev !== next) {
           setTabAnimTick((t) => t + 1);
@@ -263,8 +330,13 @@ export function App() {
         return next;
       });
     };
-    window.addEventListener("hashchange", onHashChange);
-    return () => window.removeEventListener("hashchange", onHashChange);
+
+    window.addEventListener("popstate", syncRoute);
+    window.addEventListener("hashchange", syncRoute);
+    return () => {
+      window.removeEventListener("popstate", syncRoute);
+      window.removeEventListener("hashchange", syncRoute);
+    };
   }, []);
 
   // Load API config on mount
@@ -295,7 +367,7 @@ export function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get("autorun") !== "1") return;
-    const sample = (MODE_INFO[mode] || MODE_INFO.face).sample || "159868758";
+    const sample = (modeInfoMap[mode] || modeInfoMap.face).sample || "159868758";
     setDrafts((prev) => ({ ...prev, [mode]: sample }));
     const resolvedKind = mode === "guide" ? "face" : mode === "dye" ? "hair" : mode;
     apiRequest("/api/convert", configuredOrigin, {
@@ -344,7 +416,7 @@ export function App() {
         if (fileInputRef.current) fileInputRef.current.value = "";
         return;
       }
-      const err = imageError(file, maxImageBytes);
+      const err = imageError(file, maxImageBytes, lang);
       if (err) {
         setSelectedFile(null);
         if (fileInputRef.current) fileInputRef.current.value = "";
@@ -356,7 +428,7 @@ export function App() {
       setPreviewObjectURL(nextURL);
       setFeedback({ message: "", tone: "info" });
     },
-    [maxImageBytes]
+    [maxImageBytes, lang]
   );
 
   // Global clipboard paste for QR images
@@ -373,13 +445,15 @@ export function App() {
       setSubTabAnimTick((t) => t + 1);
       handleSelectFile(file);
       setFeedback({
-        message: "Đã nhận ảnh QR từ bộ nhớ tạm. Bấm Chuyển ảnh QR để tiếp tục.",
+        message: isEn
+          ? "Received QR image from clipboard. Click Convert QR Image to continue."
+          : "Đã nhận ảnh QR từ bộ nhớ tạm. Bấm Chuyển ảnh QR để tiếp tục.",
         tone: "info",
       });
     };
     window.addEventListener("paste", handlePaste);
     return () => window.removeEventListener("paste", handlePaste);
-  }, [busy, mode, handleSelectFile]);
+  }, [busy, mode, handleSelectFile, isEn]);
 
   const handleSelectMode = (nextMode) => {
     if (busy || !MODES.includes(nextMode)) return;
@@ -390,9 +464,9 @@ export function App() {
       setMode(normalized);
       setFeedback({ message: "", tone: "info" });
     }
-    const targetHash = "#" + normalized;
-    if (window.location.hash !== targetHash) {
-      history.replaceState(null, "", targetHash);
+    const targetPath = "/" + normalized;
+    if (window.location.pathname !== targetPath || window.location.hash) {
+      window.history.pushState(null, "", targetPath + window.location.search);
     }
   };
 
@@ -403,7 +477,7 @@ export function App() {
     setFeedback({ message: "", tone: "info" });
   };
 
-  const currentModeInfo = MODE_INFO[mode] || MODE_INFO.face;
+  const currentModeInfo = modeInfoMap[mode] || modeInfoMap.face;
   const currentDraft = drafts[mode] ?? "";
   const currentDyeMode = dyeMode;
 
@@ -427,7 +501,9 @@ export function App() {
     setSubTabAnimTick((t) => t + 1);
     setDrafts((prev) => ({ ...prev, [mode]: sampleId }));
     setFeedback({
-      message: `Đã điền mã mẫu ${currentModeInfo.label} (${sampleId}). Nhấn Chuyển đổi để xem kết quả.`,
+      message: isEn
+        ? `Filled sample ${currentModeInfo.label} ID (${sampleId}). Click Convert to see the result.`
+        : `Đã điền mã mẫu ${currentModeInfo.label} (${sampleId}). Nhấn Chuyển đổi để xem kết quả.`,
       tone: "info",
     });
     textareaRef.current?.focus();
@@ -462,7 +538,9 @@ export function App() {
     setResultsByMode((prev) => ({ ...prev, [targetMode]: null }));
     updateStep(1);
     setFeedback({
-      message: `Đang chuyển đổi dữ liệu ${currentModeInfo.label} từ Bản Trung sang Bản Global...`,
+      message: isEn
+        ? `Converting ${currentModeInfo.label} data from CN Server to Global Server...`
+        : `Đang chuyển đổi dữ liệu ${currentModeInfo.label} từ Bản Trung sang Bản Global...`,
       tone: "loading",
     });
 
@@ -485,7 +563,9 @@ export function App() {
       if (fallbackKinds.length > 0) {
         for (const altKind of fallbackKinds) {
           setFeedback({
-            message: `Đang tự động nhận diện phân loại nhuộm (${MODE_INFO[altKind].title})...`,
+            message: isEn
+              ? `Auto-detecting dye category (${modeInfoMap[altKind].title})...`
+              : `Đang tự động nhận diện phân loại nhuộm (${modeInfoMap[altKind].title})...`,
             tone: "loading",
           });
           const altResponse = await requestFactory(controller.signal, altKind);
@@ -509,12 +589,16 @@ export function App() {
 
       if (!response.ok) {
         const message = payload?.error
-          ? apiErrorMessage(payload.error, resolvedKind)
+          ? apiErrorMessage(payload.error, resolvedKind, lang)
+          : isEn
+          ? "Unable to convert preset data right now. Please try again shortly."
           : "Không thể chuyển đổi dữ liệu lúc này. Vui lòng thử lại sau.";
         throw new Error(message);
       }
       if (!payload || typeof payload !== "object") {
-        throw new Error("Phản hồi từ máy chủ không hợp lệ.");
+        throw new Error(
+          isEn ? "Invalid response from the server." : "Phản hồi từ máy chủ không hợp lệ."
+        );
       }
 
       clearTimeout(timer1);
@@ -545,10 +629,18 @@ export function App() {
       }, 90);
     } catch (err) {
       if (err?.name === "AbortError") {
-        setFeedback({ message: "Đã hủy yêu cầu chuyển đổi.", tone: "info" });
+        setFeedback({
+          message: isEn ? "Conversion request cancelled." : "Đã hủy yêu cầu chuyển đổi.",
+          tone: "info",
+        });
       } else {
         setFeedback({
-          message: err instanceof Error ? err.message : "Đã xảy ra lỗi không xác định.",
+          message:
+            err instanceof Error
+              ? err.message
+              : isEn
+              ? "An unexpected error occurred."
+              : "Đã xảy ra lỗi không xác định.",
           tone: "error",
         });
       }
@@ -564,10 +656,15 @@ export function App() {
   const handleConvertText = () => {
     let baseBody;
     try {
-      baseBody = inputBody(currentDraft);
+      baseBody = inputBody(currentDraft, lang);
     } catch (err) {
       setFeedback({
-        message: err instanceof Error ? err.message : "Nội dung chưa hợp lệ.",
+        message:
+          err instanceof Error
+            ? err.message
+            : isEn
+            ? "Invalid input content."
+            : "Nội dung chưa hợp lệ.",
         tone: "error",
       });
       textareaRef.current?.focus();
@@ -596,7 +693,7 @@ export function App() {
   };
 
   const handleConvertImage = () => {
-    const err = imageError(selectedFile, maxImageBytes);
+    const err = imageError(selectedFile, maxImageBytes, lang);
     if (err) {
       setFeedback({ message: err, tone: "error" });
       return;
@@ -607,7 +704,7 @@ export function App() {
 
     runConversion(async (signal, kindToTry) => {
       if (!dataUrlPromise) {
-        dataUrlPromise = readFileAsDataURL(selectedFile);
+        dataUrlPromise = readFileAsDataURL(selectedFile, lang);
       }
       const dataUrl = await dataUrlPromise;
       const bodyObj = {
@@ -687,7 +784,9 @@ export function App() {
       }, 1800);
     } catch {
       setFeedback({
-        message: "Trình duyệt chặn sao chép tự động. Vui lòng sao chép thủ công.",
+        message: isEn
+          ? "Browser blocked automatic copy. Please copy manually."
+          : "Trình duyệt chặn sao chép tự động. Vui lòng sao chép thủ công.",
         tone: "error",
       });
     }
@@ -700,76 +799,101 @@ export function App() {
     const source = result.source || {};
     const conversion = result.conversion || {};
     const innerResult = unwrapResult(result);
-    const qr = qrPresentation(innerResult, configuredOrigin, kind);
+    const injected =
+      paletteQr && paletteQr.streamId === streamId
+        ? { ...innerResult, client_qr_data_url: paletteQr.dataUrl }
+        : innerResult;
+    const qr = qrPresentation(injected, configuredOrigin, kind, lang, source);
     const qrSrc = qr.imageURL
-      ? hostedResultURL(qr.imageURL, configuredOrigin, qr.mode === "preview" ? "preview" : "qr") ||
-        configuredOrigin + qr.imageURL
+      ? qr.mode === "palette"
+        ? qr.imageURL
+        : hostedResultURL(qr.imageURL, configuredOrigin, qr.mode === "preview" ? "preview" : "qr") ||
+          configuredOrigin + qr.imageURL
       : null;
     const payloadHref = hostedResultURL(innerResult.payload_url, configuredOrigin, "payload");
     const colors = isDye(kind) ? extractValidColors(conversion) : [];
     const warnings =
       kind === "photo"
-        ? photoWarningMessages(conversion)
-        : warningMessages(result.warnings, isDye(kind) ? [] : conversion.warnings);
-    const modelNote = faceModelNotice(conversion);
-    const compatText = compatibilitySummary(conversion, innerResult, kind);
-    const expText = expiryNote(innerResult);
+        ? photoWarningMessages(conversion, lang)
+        : warningMessages([result.warnings, isDye(kind) ? [] : conversion.warnings], lang);
+    const modelNote = faceModelNotice(conversion, lang);
+    const compatText = compatibilitySummary(conversion, innerResult, kind, lang);
+    const expText = expiryNote(innerResult, lang);
 
     const genderLabel =
       source.gender === 1 || source.gender === "1"
-        ? "Nữ"
+        ? isEn
+          ? "Female"
+          : "Nữ"
         : source.gender === 0 || source.gender === "0"
-        ? "Nam"
+        ? isEn
+          ? "Male"
+          : "Nam"
         : null;
 
     const summaryItems = [
-      { label: "Phân loại", value: MODE_INFO[kind]?.title || kind },
-      { label: "Định dạng nguồn", value: source.share_id ? `Bản Trung (#${source.share_id})` : "Bản Trung" },
-      { label: "Định dạng đích", value: "Bản Global" },
+      {
+        label: isEn ? "Category" : "Phân loại",
+        value: modeInfoMap[kind]?.title || kind,
+      },
+      {
+        label: isEn ? "Source Format" : "Định dạng nguồn",
+        value: source.share_id
+          ? isEn
+            ? `CN Server (#${source.share_id})`
+            : `Bản Trung (#${source.share_id})`
+          : isEn
+          ? "CN Server"
+          : "Bản Trung",
+      },
+      {
+        label: isEn ? "Target Format" : "Định dạng đích",
+        value: isEn ? "Global Server" : "Bản Global",
+      },
     ];
     if (source.title) {
       summaryItems.push({
-        label: "Tên mẫu gốc",
+        label: isEn ? "Source Title" : "Tên mẫu gốc",
         value: genderLabel ? `${source.title} (${genderLabel})` : source.title,
       });
     } else if (genderLabel) {
       summaryItems.push({
-        label: "Giới tính mẫu",
+        label: isEn ? "Character Gender" : "Giới tính mẫu",
         value: genderLabel,
       });
     }
     if (conversion.mode === "passthrough") {
       summaryItems.push({
-        label: "Chế độ xử lý",
-        value: "Tương thích trực tiếp (Giữ nguyên 100%)",
+        label: isEn ? "Processing Mode" : "Chế độ xử lý",
+        value: isEn ? "Direct Passthrough (100% Preserved)" : "Tương thích trực tiếp (Giữ nguyên 100%)",
       });
     } else if (conversion.source_face_type || conversion.target_face_type) {
       summaryItems.push({
-        label: "Mẫu khuôn mặt",
+        label: isEn ? "Face Model" : "Mẫu khuôn mặt",
         value: `${conversion.source_face_type || "—"} → ${conversion.target_face_type || "—"}`,
       });
     }
     if (Number.isInteger(conversion.converted_count)) {
       summaryItems.push({
-        label: "Thông số đã chuyển",
+        label: isEn ? "Converted Sliders" : "Thông số đã chuyển",
         value: String(conversion.converted_count),
       });
     } else if (Number.isInteger(conversion.translated_controls)) {
       summaryItems.push({
-        label: "Thông số đối chiếu",
+        label: isEn ? "Mapped Sliders" : "Thông số đối chiếu",
         value: String(conversion.translated_controls),
       });
     }
     if (Number.isInteger(conversion.quantized_count)) {
       summaryItems.push({
-        label: "Thông số làm tròn",
+        label: isEn ? "Quantized Sliders" : "Thông số làm tròn",
         value: String(conversion.quantized_count),
       });
     }
     if (colors.length > 0) {
       summaryItems.push({
-        label: "Số vùng màu",
-        value: `${colors.length} màu RGBA`,
+        label: isEn ? "Color Channels" : "Số vùng màu",
+        value: isEn ? `${colors.length} RGBA colors` : `${colors.length} màu RGBA`,
       });
     }
 
@@ -799,7 +923,29 @@ export function App() {
       summaryItems,
       rawControls: rawControls.slice(0, 120),
     };
-  }, [resultData, configuredOrigin]);
+  }, [resultData, configuredOrigin, lang, isEn, modeInfoMap, paletteQr]);
+
+  // Dye results without a server QR (palette-only): generate a QR locally from the RGBA palette
+  useEffect(() => {
+    if (!resultData) return;
+    const { result, kind, streamId } = resultData;
+    if (!isDye(kind)) return;
+    const inner = unwrapResult(result);
+    if (inner.qr_image_url) return;
+    const colors = extractValidColors(result.conversion || {});
+    if (colors.length === 0) return;
+    const title = result.source?.title ? ` ${result.source.title}` : "";
+    const text =
+      `NTH-DYE ${kind}${title}\n` +
+      colors.map((c) => `${c.label || c.name || "Color"}: ${c.rgba}`).join("\n");
+    let active = true;
+    generateClientQrDataURL(text).then((dataUrl) => {
+      if (active && dataUrl) setPaletteQr({ streamId, dataUrl });
+    });
+    return () => {
+      active = false;
+    };
+  }, [resultData]);
 
   return (
     <div className="relative min-h-screen overflow-x-hidden flex flex-col justify-between text-[#fdfbf7] selection:bg-[#5ce1d6]/30 selection:text-[#fdfbf7]">
@@ -820,7 +966,7 @@ export function App() {
         {/* TOP HEADER */}
         <header className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#f2d08b]/30 bg-[#0d1f2d]/85 backdrop-blur-xl px-4 sm:px-6 py-3.5 shadow-[0_16px_40px_rgba(3,10,18,0.45)]">
           <a
-            href="#face"
+            href="/face"
             onClick={(e) => {
               e.preventDefault();
               handleSelectMode("face");
@@ -852,24 +998,63 @@ export function App() {
                   Dung Hoa Các
                 </span>
                 <span className="hidden sm:inline-block text-[11px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full border border-[#f5d48f]/35 bg-[#f5d48f]/12 text-[#f5d48f]">
-                  Nghịch Thủy Hàn
+                  {isEn ? "Sword of Justice" : "Nghịch Thủy Hàn"}
                 </span>
               </div>
               <p className="text-xs sm:text-sm text-[#d4e3ee] font-medium">
-                Công Cụ Chuyển Mã Diện Mạo & Trang Phục
+                {isEn
+                  ? "Preset & Appearance QR Converter"
+                  : "Công Cụ Chuyển Mã Diện Mạo & Trang Phục"}
               </p>
             </div>
           </a>
 
-          <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             {/* Route Pill: Bản Trung -> Bản Global */}
             <div
-              className="inline-flex items-center gap-2 rounded-full border border-[#f2d08b]/35 bg-[#081520]/90 px-3.5 py-1.5 text-xs sm:text-sm font-bold shadow-inner"
-              aria-label="Chuyển đổi từ Bản Trung sang Bản Global"
+              className="inline-flex items-center gap-1.5 sm:gap-2 rounded-full border border-[#f2d08b]/35 bg-[#081520]/90 px-3 sm:px-3.5 py-1.5 text-xs sm:text-sm font-bold shadow-inner"
+              aria-label={
+                isEn
+                  ? "Convert from CN Server to Global Server"
+                  : "Chuyển đổi từ Bản Trung sang Bản Global"
+              }
             >
-              <span className="text-[#f5d48f]">Bản Trung</span>
-              <ArrowRightIcon className="w-4 h-4 text-[#5ce1d6]" />
-              <span className="text-[#5ce1d6]">Bản Global</span>
+              <span className="text-[#f5d48f]">{isEn ? "CN Server" : "Bản Trung"}</span>
+              <ArrowRightIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#5ce1d6]" />
+              <span className="text-[#5ce1d6]">{isEn ? "Global" : "Bản Global"}</span>
+            </div>
+
+            {/* Language Switcher Pill (VI / EN) */}
+            <div
+              role="group"
+              aria-label={isEn ? "Select language" : "Chọn ngôn ngữ"}
+              className="relative inline-flex items-center rounded-full border border-[#f2d08b]/35 bg-[#081520]/90 p-0.5 text-xs font-bold shadow-inner"
+            >
+              <GlobeIcon className="w-3.5 h-3.5 text-[#f5d48f] ml-2 mr-1 shrink-0 hidden sm:inline-block" />
+              <button
+                type="button"
+                onClick={() => handleSelectLang("vi")}
+                aria-pressed={lang === "vi"}
+                className={`rounded-full px-2.5 py-1 transition-all cursor-pointer ${
+                  lang === "vi"
+                    ? "bg-gradient-to-r from-[#f5d48f] to-[#dfb360] text-[#08131c] shadow"
+                    : "text-[#d8e6f2] hover:text-white"
+                }`}
+              >
+                VI
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSelectLang("en")}
+                aria-pressed={lang === "en"}
+                className={`rounded-full px-2.5 py-1 transition-all cursor-pointer ${
+                  lang === "en"
+                    ? "bg-gradient-to-r from-[#5ce1d6] to-[#2aa8a0] text-[#06121a] shadow"
+                    : "text-[#d8e6f2] hover:text-white"
+                }`}
+              >
+                EN
+              </button>
             </div>
           </div>
         </header>
@@ -883,27 +1068,42 @@ export function App() {
             <div className="md:col-span-7 space-y-2.5 sm:space-y-3">
               <div className="inline-flex items-center gap-2 rounded-full border border-[#5ce1d6]/35 bg-[#5ce1d6]/12 px-3 py-1 text-[11px] sm:text-xs font-bold uppercase tracking-wider text-[#5ce1d6]">
                 <SparkleIcon className="w-3.5 h-3.5 text-[#f5d48f] shrink-0" />
-                <span className="truncate">Tây Hồ Nguyệt Sắc · Biện Kinh Hoa Đăng</span>
+                <span className="truncate">
+                  {isEn
+                    ? "West Lake Moonlight · Bianjing Lanterns"
+                    : "Tây Hồ Nguyệt Sắc · Biện Kinh Hoa Đăng"}
+                </span>
               </div>
 
               <h1
                 id="hero-heading"
                 className="text-xl sm:text-3xl lg:text-4xl font-bold leading-tight tracking-tight text-[#fdfbf7]"
               >
-                Chuyển Đổi Mã QR & Link Chia Sẻ{" "}
+                {isEn ? "Convert QR Presets & Share Links " : "Chuyển Đổi Mã QR & Link Chia Sẻ "}
                 <span className="bg-gradient-to-r from-[#f5d48f] via-[#ffe6b3] to-[#5ce1d6] bg-clip-text text-transparent">
-                  Bản Trung → Bản Global
+                  {isEn ? "CN Server → Global Server" : "Bản Trung → Bản Global"}
                 </span>
               </h1>
 
-              <p className="text-xs sm:text-sm lg:text-base text-[#d8e6f2] leading-relaxed max-w-2xl">
-                Đồng bộ trọn vẹn thông số <strong className="text-[#f5d48f]">Khuôn mặt</strong>,{" "}
-                <strong className="text-[#f5d48f]">Trang điểm</strong>,{" "}
-                <strong className="text-[#f5d48f]">Nhuộm màu (Tóc · Áo · Quần)</strong> và{" "}
-                <strong className="text-[#f5d48f]">Chụp ảnh Đoàn phim</strong> từ{" "}
-                <strong className="text-[#5ce1d6]">Bản Trung</strong> sang{" "}
-                <strong className="text-[#5ce1d6]">Bản Global</strong> chỉ trong một chạm.
-              </p>
+              {isEn ? (
+                <p className="text-xs sm:text-sm lg:text-base text-[#d8e6f2] leading-relaxed max-w-2xl">
+                  Seamlessly synchronize <strong className="text-[#f5d48f]">Face Sculpting</strong>,{" "}
+                  <strong className="text-[#f5d48f]">Makeup</strong>,{" "}
+                  <strong className="text-[#f5d48f]">Dyeing (Hair · Top · Bottom)</strong>, and{" "}
+                  <strong className="text-[#f5d48f]">Studio Photo</strong> presets from the{" "}
+                  <strong className="text-[#5ce1d6]">CN Server</strong> to the{" "}
+                  <strong className="text-[#5ce1d6]">Global Server</strong> in one click.
+                </p>
+              ) : (
+                <p className="text-xs sm:text-sm lg:text-base text-[#d8e6f2] leading-relaxed max-w-2xl">
+                  Đồng bộ trọn vẹn thông số <strong className="text-[#f5d48f]">Khuôn mặt</strong>,{" "}
+                  <strong className="text-[#f5d48f]">Trang điểm</strong>,{" "}
+                  <strong className="text-[#f5d48f]">Nhuộm màu (Tóc · Áo · Quần)</strong> và{" "}
+                  <strong className="text-[#f5d48f]">Chụp ảnh Đoàn phim</strong> từ{" "}
+                  <strong className="text-[#5ce1d6]">Bản Trung</strong> sang{" "}
+                  <strong className="text-[#5ce1d6]">Bản Global</strong> chỉ trong một chạm.
+                </p>
+              )}
             </div>
 
             {/* Decorative Chibi Art Card (Purely Decorative — No Sect-to-Feature Mapping) */}
@@ -911,7 +1111,11 @@ export function App() {
               <div className="relative mx-auto max-w-md md:max-w-none overflow-hidden rounded-xl border border-[#f5d48f]/40 bg-[#08131c] shadow-[0_14px_35px_rgba(0,0,0,0.45)] animate-float">
                 <img
                   src="/assets/chibi/hero-sects.jpg"
-                  alt="Minh họa Bát Đại Môn Phái Nghịch Thủy Hàn"
+                  alt={
+                    isEn
+                      ? "Sword of Justice Eight Sects Chibi Illustration"
+                      : "Minh họa Bát Đại Môn Phái Nghịch Thủy Hàn"
+                  }
                   width="1376"
                   height="768"
                   fetchPriority="high"
@@ -921,10 +1125,10 @@ export function App() {
                 <div className="absolute inset-0 bg-gradient-to-t from-[#07121b] via-[#07121b]/25 to-transparent" />
                 <div className="absolute bottom-2 left-2.5 right-2.5 flex items-center justify-between gap-1.5">
                   <span className="inline-flex items-center gap-1 rounded-lg bg-[#091622]/85 backdrop-blur-md border border-[#f5d48f]/35 px-2 py-0.5 text-[11px] font-bold text-[#f5d48f] truncate">
-                    ✦ Giang Hồ Diện Mạo Lục
+                    {isEn ? "✦ Jianghu Appearance Codex" : "✦ Giang Hồ Diện Mạo Lục"}
                   </span>
                   <span className="rounded-lg bg-[#091622]/85 backdrop-blur-md border border-[#5ce1d6]/35 px-2 py-0.5 text-[10px] sm:text-[11px] font-semibold text-[#5ce1d6] shrink-0">
-                    Bát Đại Môn Phái
+                    {isEn ? "Eight Great Sects" : "Bát Đại Môn Phái"}
                   </span>
                 </div>
               </div>
@@ -936,31 +1140,31 @@ export function App() {
         <div className="mt-5 sm:mt-6 grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-6 items-start">
           {/* LEFT COMMAND DOCK: 5 MODES WITH CLICK & RIPPLE ANIMATIONS */}
           <aside
-            aria-label="Danh mục chức năng chuyển đổi"
+            aria-label={isEn ? "Conversion mode navigation" : "Danh mục chức năng chuyển đổi"}
             className="lg:col-span-4 xl:col-span-3 rounded-2xl border border-[#f2d08b]/30 bg-[#102332]/85 backdrop-blur-xl p-3.5 sm:p-4 shadow-[0_20px_50px_rgba(3,10,18,0.5)] lg:sticky lg:top-5"
           >
             <div className="flex items-center justify-between pb-2.5 mb-2.5 border-b border-[#f2d08b]/20">
               <span className="font-[family-name:var(--font-display)] text-base font-bold tracking-wide text-[#f5d48f]">
-                Danh Mục Chuyển Đổi
+                {isEn ? "Conversion Modes" : "Danh Mục Chuyển Đổi"}
               </span>
               <span className="text-[11px] font-semibold text-[#9fc0d6]">
-                {MODE_LIST.length} mục
+                {isEn ? `${modeList.length} modes` : `${modeList.length} mục`}
               </span>
             </div>
 
             <nav
               role="tablist"
-              aria-label="Chế độ chuyển mã"
+              aria-label={isEn ? "Conversion modes" : "Chế độ chuyển mã"}
               className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-1 gap-2"
             >
-              {MODE_LIST.map((item, idx) => {
+              {modeList.map((item, idx) => {
                 const IconComponent =
                   item.id === "dye"
                     ? MODE_ICON_MAP.hair || GuideIcon
                     : MODE_ICON_MAP[item.id] || GuideIcon;
                 const isActive = mode === item.id;
                 const isJustClicked = lastClickedMode === item.id;
-                const isLastOddMobile = idx === MODE_LIST.length - 1 && MODE_LIST.length % 2 === 1;
+                const isLastOddMobile = idx === modeList.length - 1 && modeList.length % 2 === 1;
 
                 return (
                   <button
@@ -1031,23 +1235,33 @@ export function App() {
             <div className="hidden lg:flex items-center gap-3 mt-4 pt-3.5 border-t border-[#f2d08b]/20">
               <img
                 src="/assets/chibi/chibi-tovan.jpg"
-                alt="Tiểu sư muội Tố Vấn"
+                alt={isEn ? "Sylph Junior Sister" : "Tiểu sư muội Tố Vấn"}
                 width="52"
                 height="52"
                 loading="lazy"
                 decoding="async"
                 className="w-12 h-12 rounded-xl object-cover border border-[#f5d48f]/45 shrink-0"
               />
-              <p className="text-xs text-[#d4e3ee] leading-snug">
-                Mẹo nhỏ: Nhấn <strong className="text-[#f5d48f]">Ctrl + V</strong> ở bất kỳ đâu để dán nhanh ảnh chụp màn hình chứa mã QR!
-              </p>
+              {isEn ? (
+                <p className="text-xs text-[#d4e3ee] leading-snug">
+                  Tip: Press <strong className="text-[#f5d48f]">Ctrl + V</strong> anywhere to quickly paste a screenshot containing a QR code!
+                </p>
+              ) : (
+                <p className="text-xs text-[#d4e3ee] leading-snug">
+                  Mẹo nhỏ: Nhấn <strong className="text-[#f5d48f]">Ctrl + V</strong> ở bất kỳ đâu để dán nhanh ảnh chụp màn hình chứa mã QR!
+                </p>
+              )}
             </div>
           </aside>
 
           {/* RIGHT MAIN PANEL: ANIMATED TAB CONTENT */}
           <main className="lg:col-span-8 xl:col-span-9 min-w-0">
             {mode === "guide" ? (
-              <GuidePanel key={`guide-${tabAnimTick}`} onSelectMode={handleSelectMode} />
+              <GuidePanel
+                key={`guide-${tabAnimTick}-${lang}`}
+                onSelectMode={handleSelectMode}
+                lang={lang}
+              />
             ) : (
               <section
                 key={`panel-${mode}-${tabAnimTick}`}
@@ -1058,16 +1272,22 @@ export function App() {
                 <div className="flex flex-wrap items-start justify-between gap-3 sm:gap-4 pb-4 sm:pb-5 mb-4 sm:mb-5 border-b border-[#f2d08b]/20">
                   <div>
                     <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] sm:text-xs font-bold uppercase tracking-wider text-[#5ce1d6] mb-1">
-                      <span>Danh Mục Đang Chọn</span>
+                      <span>{isEn ? "Selected Category" : "Danh Mục Đang Chọn"}</span>
                       <span>·</span>
-                      <span className="text-[#f5d48f]">Bản Trung → Bản Global</span>
+                      <span className="text-[#f5d48f]">
+                        {isEn ? "CN Server → Global Server" : "Bản Trung → Bản Global"}
+                      </span>
                     </div>
                     <h2
                       id="converter-panel-title"
                       className="text-xl sm:text-3xl font-bold text-[#fdfbf7] tracking-tight"
                     >
                       {mode === "dye"
-                        ? "Chuyển đổi Màu tóc · Màu áo · Màu quần (Tự động nhận diện)"
+                        ? isEn
+                          ? "Convert Hair · Top · Bottom Dye (Auto-Detect)"
+                          : "Chuyển đổi Màu tóc · Màu áo · Màu quần (Tự động nhận diện)"
+                        : isEn
+                        ? `Convert ${currentModeInfo.title} (${currentModeInfo.subtitle})`
                         : `Chuyển đổi ${currentModeInfo.title} (${currentModeInfo.subtitle})`}
                     </h2>
                   </div>
@@ -1091,22 +1311,28 @@ export function App() {
                       <div>
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="text-xs font-bold uppercase tracking-wider text-[#5ce1d6]">
-                            Chế độ áp mẫu nhuộm (Tóc · Áo · Quần)
+                            {isEn
+                              ? "Dye Target Mode (Hair · Top · Bottom)"
+                              : "Chế độ áp mẫu nhuộm (Tóc · Áo · Quần)"}
                           </span>
                           <span className="inline-flex items-center gap-1 rounded-full border border-[#f5d48f]/35 bg-[#f5d48f]/12 px-2 py-0.5 text-[10px] font-bold text-[#f5d48f]">
-                            ✦ Tự động nhận diện
+                            {isEn ? "✦ Auto-Detect" : "✦ Tự động nhận diện"}
                           </span>
                         </div>
                         <p className="text-xs text-[#d4e3ee] mt-0.5">
                           {currentDyeMode === "default"
-                            ? "Áp màu lên mẫu mặc định của Bản Global. Hệ thống tự động nhận diện mã Màu tóc, Màu áo hoặc Màu quần khi chuyển đổi."
+                            ? isEn
+                              ? "Applies dye colors onto the Global Server default item. Automatically detects Hair, Top, or Bottom dye presets."
+                              : "Áp màu lên mẫu mặc định của Bản Global. Hệ thống tự động nhận diện mã Màu tóc, Màu áo hoặc Màu quần khi chuyển đổi."
+                            : isEn
+                            ? "Preserves the exact original garment ID (requires owning the item in-game). Automatically detects Hair, Top, or Bottom dye presets."
                             : "Giữ đúng mã vật phẩm gốc (yêu cầu nhân vật đã sở hữu). Hệ thống tự động nhận diện mã Màu tóc, Màu áo hoặc Màu quần khi chuyển đổi."}
                         </p>
                       </div>
 
                       <div
                         role="radiogroup"
-                        aria-label="Chế độ mẫu nhuộm"
+                        aria-label={isEn ? "Dye target mode" : "Chế độ mẫu nhuộm"}
                         className="relative grid grid-cols-2 rounded-xl border border-[#f2d08b]/30 bg-[#061018] p-1 sm:min-w-[260px] shrink-0"
                       >
                         {/* Sliding Active Pill Background */}
@@ -1125,7 +1351,7 @@ export function App() {
                             currentDyeMode === "default" ? "text-[#08131c]" : "text-[#d8e6f2] hover:text-white"
                           }`}
                         >
-                          Mẫu mặc định
+                          {isEn ? "Default Item" : "Mẫu mặc định"}
                         </button>
                         <button
                           type="button"
@@ -1136,7 +1362,7 @@ export function App() {
                             currentDyeMode === "exact" ? "text-[#08131c]" : "text-[#d8e6f2] hover:text-white"
                           }`}
                         >
-                          Giữ mẫu gốc
+                          {isEn ? "Keep Original" : "Giữ mẫu gốc"}
                         </button>
                       </div>
                     </div>
@@ -1147,7 +1373,7 @@ export function App() {
                 <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                   <div
                     role="tablist"
-                    aria-label="Phương thức nhập dữ liệu"
+                    aria-label={isEn ? "Input method" : "Phương thức nhập dữ liệu"}
                     className="relative grid grid-cols-2 rounded-xl border border-[#f2d08b]/30 bg-[#08141f] p-1 w-full sm:w-80"
                   >
                     <span
@@ -1166,7 +1392,7 @@ export function App() {
                       }`}
                     >
                       <LinkIcon className="w-4 h-4" />
-                      <span>Dán link / Mã</span>
+                      <span>{isEn ? "Paste Link / ID" : "Dán link / Mã"}</span>
                     </button>
                     <button
                       type="button"
@@ -1178,7 +1404,7 @@ export function App() {
                       }`}
                     >
                       <ImageIcon className="w-4 h-4" />
-                      <span>Ảnh QR</span>
+                      <span>{isEn ? "QR Image" : "Ảnh QR"}</span>
                     </button>
                   </div>
 
@@ -1190,7 +1416,11 @@ export function App() {
                       className="inline-flex items-center gap-1.5 rounded-xl border border-[#5ce1d6]/40 bg-[#5ce1d6]/12 px-3 py-2 text-xs font-bold text-[#5ce1d6] hover:bg-[#5ce1d6]/22 active:scale-95 transition cursor-pointer"
                     >
                       <SparkleIcon className="w-3.5 h-3.5" />
-                      <span>Thử mã mẫu ({currentModeInfo.sample})</span>
+                      <span>
+                        {isEn
+                          ? `Try Sample (${currentModeInfo.sample})`
+                          : `Thử mã mẫu (${currentModeInfo.sample})`}
+                      </span>
                     </button>
                     <button
                       type="button"
@@ -1198,7 +1428,7 @@ export function App() {
                       className="inline-flex items-center gap-1.5 rounded-xl border border-[#f2d08b]/30 bg-[#0a1824] px-3 py-2 text-xs font-semibold text-[#d8e6f2] hover:border-[#f5d48f]/60 hover:text-[#f5d48f] active:scale-95 transition cursor-pointer"
                     >
                       <GuideIcon className="w-3.5 h-3.5" />
-                      <span>Hướng dẫn</span>
+                      <span>{isEn ? "Guide" : "Hướng dẫn"}</span>
                     </button>
                   </div>
                 </div>
@@ -1212,7 +1442,9 @@ export function App() {
                           htmlFor="share-link-input"
                           className="block text-xs font-bold uppercase tracking-wider text-[#f5d48f] mb-2"
                         >
-                          Dán link chia sẻ, văn bản Thiết Kế hoặc mã ID {currentModeInfo.label} Bản Trung
+                          {isEn
+                            ? `Paste CN Server share link, preset text, or ${currentModeInfo.label} ID`
+                            : `Dán link chia sẻ, văn bản Thiết Kế hoặc mã ID ${currentModeInfo.label} Bản Trung`}
                         </label>
                         <textarea
                           ref={textareaRef}
@@ -1226,25 +1458,45 @@ export function App() {
                               handleConvertText();
                             }
                           }}
-                          placeholder={`Ví dụ: https://h.163.com/avatar/... hoặc mã số ${currentModeInfo.sample}...`}
+                          placeholder={
+                            isEn
+                              ? `Example: https://h.163.com/avatar/... or preset ID ${currentModeInfo.sample}...`
+                              : `Ví dụ: https://h.163.com/avatar/... hoặc mã số ${currentModeInfo.sample}...`
+                          }
                           className="w-full rounded-xl border border-[#f2d08b]/35 bg-[#08141f]/90 p-4 text-sm sm:text-base text-[#fdfbf7] placeholder-[#7fa3bd] focus:border-[#5ce1d6] focus:outline-none focus:ring-2 focus:ring-[#5ce1d6]/30 transition"
                         />
                         {currentDraft ? (
                           <button
                             type="button"
                             onClick={handleClearInput}
-                            aria-label="Xóa nội dung đã nhập"
+                            aria-label={isEn ? "Clear input" : "Xóa nội dung đã nhập"}
                             className="absolute top-9 right-3 inline-flex items-center gap-1 rounded-lg border border-[#f2d08b]/30 bg-[#102436] px-2.5 py-1 text-xs font-semibold text-[#d4e3ee] hover:text-white hover:border-[#f5d48f] transition cursor-pointer"
                           >
                             <CloseIcon className="w-3 h-3" />
-                            <span>Xóa</span>
+                            <span>{isEn ? "Clear" : "Xóa"}</span>
                           </button>
                         ) : null}
                       </div>
 
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <p className="text-xs text-[#9fc0d6]">
-                          Nhấn <kbd className="rounded bg-[#091622] px-1.5 py-0.5 border border-[#f2d08b]/30 text-[#f5d48f]">Ctrl + Enter</kbd> để chuyển đổi nhanh.
+                          {isEn ? (
+                            <>
+                              Press{" "}
+                              <kbd className="rounded bg-[#091622] px-1.5 py-0.5 border border-[#f2d08b]/30 text-[#f5d48f]">
+                                Ctrl + Enter
+                              </kbd>{" "}
+                              for instant conversion.
+                            </>
+                          ) : (
+                            <>
+                              Nhấn{" "}
+                              <kbd className="rounded bg-[#091622] px-1.5 py-0.5 border border-[#f2d08b]/30 text-[#f5d48f]">
+                                Ctrl + Enter
+                              </kbd>{" "}
+                              để chuyển đổi nhanh.
+                            </>
+                          )}
                         </p>
 
                         <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
@@ -1254,7 +1506,7 @@ export function App() {
                               onClick={handleCancelRequest}
                               className="rounded-xl border border-[#ff7b8b]/50 bg-[#ff7b8b]/15 px-4 py-3 text-sm font-bold text-[#ff9aa7] hover:bg-[#ff7b8b]/25 transition cursor-pointer"
                             >
-                              Hủy
+                              {isEn ? "Cancel" : "Hủy"}
                             </button>
                           ) : null}
 
@@ -1265,7 +1517,13 @@ export function App() {
                             className="relative overflow-hidden w-full sm:w-auto inline-flex items-center justify-center gap-2.5 rounded-xl bg-gradient-to-r from-[#f5d48f] via-[#e8be6b] to-[#5ce1d6] px-6 py-3.5 text-sm sm:text-base font-extrabold text-[#07131d] shadow-[0_10px_28px_rgba(245,212,143,0.3)] hover:brightness-105 active:scale-95 disabled:opacity-60 transition cursor-pointer"
                           >
                             <span>
-                              {busy ? "Đang chuyển đổi..." : `Chuyển đổi ${currentModeInfo.title}`}
+                              {busy
+                                ? isEn
+                                  ? "Converting..."
+                                  : "Đang chuyển đổi..."
+                                : isEn
+                                ? `Convert ${currentModeInfo.title}`
+                                : `Chuyển đổi ${currentModeInfo.title}`}
                             </span>
                             <ArrowRightIcon className="w-4 h-4" />
                           </button>
@@ -1314,18 +1572,19 @@ export function App() {
                           >
                             <img
                               src={previewObjectURL}
-                              alt="Xem trước ảnh QR đã chọn"
+                              alt={isEn ? "Selected QR image preview" : "Xem trước ảnh QR đã chọn"}
                               className="w-28 h-28 rounded-xl object-contain border border-[#f5d48f]/50 bg-[#050d14] p-1.5 shadow-lg"
                             />
                             <div className="space-y-2 text-center sm:text-left">
                               <span className="inline-block rounded-full bg-[#5ce1d6]/15 border border-[#5ce1d6]/40 px-2.5 py-0.5 text-xs font-bold text-[#5ce1d6]">
-                                Đã sẵn sàng quét QR
+                                {isEn ? "Ready to scan QR" : "Đã sẵn sàng quét QR"}
                               </span>
                               <p className="text-sm font-bold text-[#fdfbf7] break-all max-w-xs">
                                 {selectedFile.name}
                               </p>
                               <p className="text-xs text-[#9fc0d6]">
-                                Kích thước: {Math.max(1, Math.round(selectedFile.size / 1024))} KB
+                                {isEn ? "Size" : "Kích thước"}:{" "}
+                                {Math.max(1, Math.round(selectedFile.size / 1024))} KB
                               </p>
                               <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 pt-1">
                                 <button
@@ -1333,14 +1592,14 @@ export function App() {
                                   onClick={() => fileInputRef.current?.click()}
                                   className="rounded-lg border border-[#f5d48f]/45 bg-[#f5d48f]/15 px-3 py-1.5 text-xs font-bold text-[#f5d48f] hover:bg-[#f5d48f]/25 transition cursor-pointer"
                                 >
-                                  Đổi ảnh khác
+                                  {isEn ? "Change Image" : "Đổi ảnh khác"}
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => handleSelectFile(null)}
                                   className="rounded-lg border border-[#ff7b8b]/40 bg-[#ff7b8b]/12 px-3 py-1.5 text-xs font-bold text-[#ff9aa7] hover:bg-[#ff7b8b]/22 transition cursor-pointer"
                                 >
-                                  Xóa ảnh
+                                  {isEn ? "Remove" : "Xóa ảnh"}
                                 </button>
                               </div>
                             </div>
@@ -1351,12 +1610,25 @@ export function App() {
                               <UploadCloudIcon className="w-7 h-7" />
                             </div>
                             <p className="text-base font-bold text-[#fdfbf7]">
-                              Chạm để chọn ảnh QR hoặc kéo thả ảnh vào đây
+                              {isEn
+                                ? "Click to choose a QR image or drag & drop it here"
+                                : "Chạm để chọn ảnh QR hoặc kéo thả ảnh vào đây"}
                             </p>
-                            <p className="text-xs sm:text-sm text-[#9fc0d6]">
-                              Hỗ trợ <strong className="text-[#f5d48f]">PNG, JPG, WebP</strong> (tối đa 5 MB) · Hoặc nhấn{" "}
-                              <strong className="text-[#5ce1d6]">Ctrl + V</strong> để dán ảnh từ bộ nhớ tạm
-                            </p>
+                            {isEn ? (
+                              <p className="text-xs sm:text-sm text-[#9fc0d6]">
+                                Supports <strong className="text-[#f5d48f]">PNG, JPG, WebP</strong>{" "}
+                                (up to 5 MB) · Or press{" "}
+                                <strong className="text-[#5ce1d6]">Ctrl + V</strong> to paste from
+                                clipboard
+                              </p>
+                            ) : (
+                              <p className="text-xs sm:text-sm text-[#9fc0d6]">
+                                Hỗ trợ <strong className="text-[#f5d48f]">PNG, JPG, WebP</strong>{" "}
+                                (tối đa 5 MB) · Hoặc nhấn{" "}
+                                <strong className="text-[#5ce1d6]">Ctrl + V</strong> để dán ảnh từ
+                                bộ nhớ tạm
+                              </p>
+                            )}
                           </div>
                         )}
                       </div>
@@ -1368,7 +1640,7 @@ export function App() {
                             onClick={handleCancelRequest}
                             className="rounded-xl border border-[#ff7b8b]/50 bg-[#ff7b8b]/15 px-4 py-3 text-sm font-bold text-[#ff9aa7] hover:bg-[#ff7b8b]/25 transition cursor-pointer"
                           >
-                            Hủy
+                            {isEn ? "Cancel" : "Hủy"}
                           </button>
                         ) : null}
 
@@ -1379,7 +1651,13 @@ export function App() {
                           className="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 rounded-xl bg-gradient-to-r from-[#f5d48f] via-[#e8be6b] to-[#5ce1d6] px-6 py-3.5 text-sm sm:text-base font-extrabold text-[#07131d] shadow-[0_10px_28px_rgba(245,212,143,0.3)] hover:brightness-105 active:scale-95 disabled:opacity-50 transition cursor-pointer"
                         >
                           <span>
-                            {busy ? "Đang giải mã QR..." : `Chuyển ảnh QR (${currentModeInfo.title})`}
+                            {busy
+                              ? isEn
+                                ? "Decoding QR..."
+                                : "Đang giải mã QR..."
+                              : isEn
+                              ? `Convert QR Image (${currentModeInfo.title})`
+                              : `Chuyển ảnh QR (${currentModeInfo.title})`}
                           </span>
                           <ArrowRightIcon className="w-4 h-4" />
                         </button>
@@ -1401,10 +1679,14 @@ export function App() {
                           className="w-2 h-2 rounded-full bg-[#5ce1d6] shadow-[0_0_8px_#5ce1d6] animate-pulse"
                           aria-hidden="true"
                         />
-                        <span>Đang vận chuyển chân khí giải mã dữ liệu...</span>
+                        <span>
+                          {isEn
+                            ? "Channeling inner Qi to decode preset parameters..."
+                            : "Đang vận chuyển chân khí giải mã dữ liệu..."}
+                        </span>
                       </span>
                       <span className="rounded-full border border-[#5ce1d6]/30 bg-[#5ce1d6]/12 px-2.5 py-0.5 text-[11px]">
-                        Bước {progressStep}/3
+                        {isEn ? `Step ${progressStep}/3` : `Bước ${progressStep}/3`}
                       </span>
                     </div>
 
@@ -1433,11 +1715,18 @@ export function App() {
                         <span className="pointer-events-none absolute inset-0 w-1/2 bg-gradient-to-r from-transparent via-white/25 to-transparent animate-shimmer" />
                       </span>
 
-                      {[
-                        { step: 1, label: "1. Giải mã Bản Trung" },
-                        { step: 2, label: "2. Đối chiếu Bản Global" },
-                        { step: 3, label: "3. Khởi tạo mã QR" },
-                      ].map((item) => {
+                      {(isEn
+                        ? [
+                            { step: 1, label: "1. Decode CN Preset" },
+                            { step: 2, label: "2. Map to Global" },
+                            { step: 3, label: "3. Generate QR" },
+                          ]
+                        : [
+                            { step: 1, label: "1. Giải mã Bản Trung" },
+                            { step: 2, label: "2. Đối chiếu Bản Global" },
+                            { step: 3, label: "3. Khởi tạo mã QR" },
+                          ]
+                      ).map((item) => {
                         const isCurrent = progressStep === item.step;
                         const isDone = progressStep > item.step;
                         return (
@@ -1497,16 +1786,24 @@ export function App() {
                           <CheckCircleIcon className="w-5 h-5 shrink-0" />
                           <span>
                             {renderedResult.conversion.mode === "passthrough"
-                              ? `QR sẵn sàng (Tương thích trực tiếp) · ${MODE_INFO[renderedResult.kind]?.title}`
-                              : `Chuyển đổi hoàn tất · ${MODE_INFO[renderedResult.kind]?.title} (Bản Trung → Bản Global)`}
+                              ? isEn
+                                ? `QR Ready (Direct Compatibility) · ${modeInfoMap[renderedResult.kind]?.title}`
+                                : `QR sẵn sàng (Tương thích trực tiếp) · ${modeInfoMap[renderedResult.kind]?.title}`
+                              : isEn
+                              ? `Conversion Complete · ${modeInfoMap[renderedResult.kind]?.title} (CN → Global)`
+                              : `Chuyển đổi hoàn tất · ${modeInfoMap[renderedResult.kind]?.title} (Bản Trung → Bản Global)`}
                           </span>
                           {renderedResult.source.title || renderedResult.source.share_id ? (
                             <span className="rounded-lg border border-[#5ce1d6]/35 bg-[#5ce1d6]/12 px-2.5 py-0.5 text-sm font-bold text-[#5ce1d6]">
                               {renderedResult.source.title ? `${renderedResult.source.title} ` : ""}
                               {renderedResult.source.gender === 1 || renderedResult.source.gender === "1"
-                                ? "· Nữ "
+                                ? isEn
+                                  ? "· Female "
+                                  : "· Nữ "
                                 : renderedResult.source.gender === 0 || renderedResult.source.gender === "0"
-                                ? "· Nam "
+                                ? isEn
+                                  ? "· Male "
+                                  : "· Nam "
                                 : ""}
                               {renderedResult.source.share_id ? `#${renderedResult.source.share_id}` : ""}
                             </span>
@@ -1534,7 +1831,11 @@ export function App() {
                           <div className="relative p-3 rounded-2xl border-2 border-[#f5d48f]/60 bg-white shadow-[0_12px_35px_rgba(0,0,0,0.5)]">
                             <img
                               src={renderedResult.qrSrc}
-                              alt="Mã QR kết quả cho Bản Global"
+                              alt={
+                                isEn
+                                  ? "Converted QR Code for Global Server"
+                                  : "Mã QR kết quả cho Bản Global"
+                              }
                               width="240"
                               height="240"
                               className="w-48 h-48 sm:w-56 sm:h-56 object-contain"
@@ -1573,7 +1874,13 @@ export function App() {
                               >
                                 <CopyIcon className="w-4 h-4" />
                                 <span>
-                                  {copiedId === "qr-link" ? "Đã sao chép link QR!" : "Sao chép link QR"}
+                                  {copiedId === "qr-link"
+                                    ? isEn
+                                      ? "Copied QR Link!"
+                                      : "Đã sao chép link QR!"
+                                    : isEn
+                                    ? "Copy QR Link"
+                                    : "Sao chép link QR"}
                                 </span>
                               </button>
                             ) : null}
@@ -1585,7 +1892,7 @@ export function App() {
                                 className="inline-flex items-center gap-2 rounded-xl border border-[#f2d08b]/30 bg-[#102436] px-4 py-3 text-xs font-bold text-[#d8e6f2] hover:border-[#f5d48f] hover:text-[#f5d48f] transition"
                               >
                                 <DownloadIcon className="w-4 h-4" />
-                                <span>Tải dữ liệu gốc</span>
+                                <span>{isEn ? "Download Raw Data" : "Tải dữ liệu gốc"}</span>
                               </a>
                             ) : null}
                           </div>
@@ -1599,10 +1906,14 @@ export function App() {
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div>
                             <h3 className="text-lg font-bold text-[#fdfbf7]">
-                              Bảng màu RGBA đã tách ({renderedResult.colors.length} vùng)
+                              {isEn
+                                ? `Extracted RGBA Color Palette (${renderedResult.colors.length} channels)`
+                                : `Bảng màu RGBA đã tách (${renderedResult.colors.length} vùng)`}
                             </h3>
                             <p className="text-xs text-[#9fc0d6]">
-                              Nhấn vào từng ô màu để sao chép mã HEX RGBA dùng trong Bản Global.
+                              {isEn
+                                ? "Click any color swatch to copy its RGBA HEX code for manual tuning in the Global Server."
+                                : "Nhấn vào từng ô màu để sao chép mã HEX RGBA dùng trong Bản Global."}
                             </p>
                           </div>
                           <button
@@ -1617,7 +1928,13 @@ export function App() {
                           >
                             <CopyIcon className="w-3.5 h-3.5" />
                             <span>
-                              {copiedId === "all-colors" ? "Đã chép toàn bộ!" : "Sao chép tất cả"}
+                              {copiedId === "all-colors"
+                                ? isEn
+                                  ? "Copied All!"
+                                  : "Đã chép toàn bộ!"
+                                : isEn
+                                ? "Copy All"
+                                : "Sao chép tất cả"}
                             </span>
                           </button>
                         </div>
@@ -1642,9 +1959,15 @@ export function App() {
                                   </div>
                                   <div className="text-[11px] text-[#9fc0d6]">
                                     {copiedId === swatchId
-                                      ? "Đã chép!"
+                                      ? isEn
+                                        ? "Copied!"
+                                        : "Đã chép!"
                                       : item.slot !== undefined
-                                      ? `Vùng ${item.slot}`
+                                      ? isEn
+                                        ? `Channel ${item.slot}`
+                                        : `Vùng ${item.slot}`
+                                      : isEn
+                                      ? `Color #${index + 1}`
                                       : `Màu #${index + 1}`}
                                   </div>
                                 </div>
@@ -1658,7 +1981,11 @@ export function App() {
                     {/* COLLAPSIBLE TECHNICAL DETAILS & COMPARISON TABLE */}
                     <details className="group rounded-2xl border border-[#f2d08b]/25 bg-[#08141f]/90 overflow-hidden">
                       <summary className="flex items-center justify-between gap-3 px-5 py-4 cursor-pointer select-none text-sm font-bold text-[#f5d48f] hover:bg-[#0e2233] transition">
-                        <span>Chi tiết kỹ thuật & đối chiếu thông số (Bản Trung → Bản Global)</span>
+                        <span>
+                          {isEn
+                            ? "Technical Breakdown & Parameter Mapping (CN Server → Global Server)"
+                            : "Chi tiết kỹ thuật & đối chiếu thông số (Bản Trung → Bản Global)"}
+                        </span>
                         <span className="text-xs text-[#5ce1d6] group-open:rotate-180 transition-transform">
                           ▼
                         </span>
@@ -1686,26 +2013,48 @@ export function App() {
                             <table className="w-full text-left text-xs">
                               <thead className="bg-[#0f2436] text-[#f5d48f] uppercase">
                                 <tr>
-                                  <th className="py-2.5 px-3 font-bold">Thông số</th>
-                                  <th className="py-2.5 px-3 font-bold">Bản Trung</th>
-                                  <th className="py-2.5 px-3 font-bold">Bản Global</th>
-                                  <th className="py-2.5 px-3 font-bold">Trạng thái</th>
+                                  <th className="py-2.5 px-3 font-bold">
+                                    {isEn ? "Parameter" : "Thông số"}
+                                  </th>
+                                  <th className="py-2.5 px-3 font-bold">
+                                    {isEn ? "CN Server" : "Bản Trung"}
+                                  </th>
+                                  <th className="py-2.5 px-3 font-bold">
+                                    {isEn ? "Global Server" : "Bản Global"}
+                                  </th>
+                                  <th className="py-2.5 px-3 font-bold">
+                                    {isEn ? "Status" : "Trạng thái"}
+                                  </th>
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-[#f2d08b]/10 text-[#d8e6f2]">
                                 {renderedResult.rawControls.map((ctrl, idx) => (
                                   <tr key={idx} className="hover:bg-[#0e2233]/60">
                                     <td className="py-2 px-3 font-semibold text-[#fdfbf7]">
-                                      {ctrl.label || ctrl.name || ctrl.field || `Thông số #${idx + 1}`}
+                                      {getControlDisplayName(ctrl, idx, lang)}
                                     </td>
                                     <td className="py-2 px-3 font-mono">
-                                      {formatValue(ctrl.source_value ?? ctrl.cn_value ?? ctrl.before)}
+                                      {formatValue(
+                                        ctrl.source_value ?? ctrl.cn_value ?? ctrl.before,
+                                        lang
+                                      )}
                                     </td>
                                     <td className="py-2 px-3 font-mono text-[#5ce1d6]">
-                                      {formatValue(ctrl.target_value ?? ctrl.vng_value ?? ctrl.after)}
+                                      {formatValue(
+                                        ctrl.target_value ?? ctrl.vng_value ?? ctrl.after,
+                                        lang
+                                      )}
                                     </td>
                                     <td className="py-2 px-3">
-                                      {ctrl.status || (ctrl.clamped ? "Đã giới hạn" : "Đã chuyển")}
+                                      {ctrl.status
+                                        ? ctrl.status
+                                        : ctrl.clamped
+                                        ? isEn
+                                          ? "Clamped"
+                                          : "Đã giới hạn"
+                                        : isEn
+                                        ? "Converted"
+                                        : "Đã chuyển"}
                                     </td>
                                   </tr>
                                 ))}
@@ -1714,7 +2063,28 @@ export function App() {
                           </div>
                         ) : renderedResult.conversion.mode === "passthrough" ? (
                           <div className="rounded-xl border border-[#5ce1d6]/30 bg-[#0b1f2e] px-4 py-3 text-xs text-[#d8e6f2] leading-relaxed">
-                            ✦ Mẫu thiết kế <strong className="text-[#f5d48f]">{renderedResult.source.title || `#${renderedResult.source.share_id || ""}`}</strong> sử dụng cấu trúc dữ liệu tương thích trực tiếp 1:1 với Bản Global. Toàn bộ thông số khuôn mặt gốc được giữ nguyên 100% mà không cần biến đổi hay làm tròn thanh trượt.
+                            {isEn ? (
+                              <>
+                                ✦ Preset{" "}
+                                <strong className="text-[#f5d48f]">
+                                  {renderedResult.source.title ||
+                                    `#${renderedResult.source.share_id || ""}`}
+                                </strong>{" "}
+                                uses a data schema that is 1:1 compatible with the Global Server. All
+                                original facial parameters are preserved 100% without slider quantization.
+                              </>
+                            ) : (
+                              <>
+                                ✦ Mẫu thiết kế{" "}
+                                <strong className="text-[#f5d48f]">
+                                  {renderedResult.source.title ||
+                                    `#${renderedResult.source.share_id || ""}`}
+                                </strong>{" "}
+                                sử dụng cấu trúc dữ liệu tương thích trực tiếp 1:1 với Bản Global. Toàn
+                                bộ thông số khuôn mặt gốc được giữ nguyên 100% mà không cần biến đổi hay
+                                làm tròn thanh trượt.
+                              </>
+                            )}
                           </div>
                         ) : null}
                       </div>
@@ -1730,7 +2100,9 @@ export function App() {
       {/* FOOTER */}
       <footer className="relative z-10 mt-8 border-t border-[#f2d08b]/20 bg-[#07121c]/90 backdrop-blur-md py-5 px-4 text-center">
         <p className="text-xs sm:text-sm font-medium text-[#d8e6f2]">
-          Dự án phi lợi nhuận vì cộng đồng Nghịch Thủy Hàn
+          {isEn
+            ? "Non-profit community project for Sword of Justice (Nghịch Thủy Hàn) players"
+            : "Dự án phi lợi nhuận vì cộng đồng Nghịch Thủy Hàn"}
         </p>
         <p className="text-xs font-bold text-[#f5d48f] mt-1 tracking-wide">
           Crafted with ♥ by Huynh Huynh

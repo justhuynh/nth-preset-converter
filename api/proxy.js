@@ -1,7 +1,6 @@
 const UPSTREAM_HOST = "103.101.163.27";
 const UPSTREAM_PORT = 8443;
 const UPSTREAM_ORIGIN = `https://${UPSTREAM_HOST}:${UPSTREAM_PORT}`;
-const SPOOF_ORIGIN = "https://nth-qrcode-converter.pages.dev";
 
 export default async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -28,8 +27,8 @@ export default async function handler(req, res) {
   try {
     const headers = { ...req.headers };
     delete headers.host;
-    headers["origin"] = SPOOF_ORIGIN;
-    headers["referer"] = `${SPOOF_ORIGIN}/`;
+    delete headers.origin;
+    delete headers.referer;
 
     const fetchOptions = {
       method: req.method,

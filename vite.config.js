@@ -6,7 +6,6 @@ import tailwindcss from "@tailwindcss/vite";
 const UPSTREAM_HOST = "103.101.163.27";
 const UPSTREAM_PORT = 8443;
 const UPSTREAM_ORIGIN = `https://${UPSTREAM_HOST}:${UPSTREAM_PORT}`;
-const SPOOF_ORIGIN = "https://nth-qrcode-converter.pages.dev";
 
 const upstreamAgent = new https.Agent({
   rejectUnauthorized: false,
@@ -20,16 +19,11 @@ const proxyEntry = {
   agent: upstreamAgent,
   timeout: 120000,
   proxyTimeout: 120000,
-  headers: {
-    Origin: SPOOF_ORIGIN,
-    Referer: `${SPOOF_ORIGIN}/`,
-  },
 };
 
 const proxyConfig = {
-  "/api/results": proxyEntry,
-  "/api": proxyEntry,
-  "/f": proxyEntry,
+  "^/api/": proxyEntry,
+  "^/f/": proxyEntry,
 };
 
 export default defineConfig({

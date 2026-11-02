@@ -7,6 +7,38 @@
     {
       "source": "/f/:match*",
       "destination": "/api/proxy?_path=/f/:match*"
+    },
+    {
+      "source": "/face",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/makeup",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/dye",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/hair",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/top",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/bottom",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/photo",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/guide",
+      "destination": "/index.html"
     }
   ]
 }

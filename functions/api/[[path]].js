@@ -14,8 +14,8 @@ export async function onRequest(context) {
   }
 
   const headers = new Headers(context.request.headers);
-  headers.set("Origin", "https://nth-qrcode-converter.pages.dev");
-  headers.set("Referer", "https://nth-qrcode-converter.pages.dev/");
+  headers.delete("Origin");
+  headers.delete("Referer");
 
   const response = await fetch(upstreamUrl, {
     method: context.request.method,
